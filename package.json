@@ -8,6 +8,7 @@
     "build": "webpack --mode production"
   },
   "devDependencies": {
+    "@types/earcut": "^2",
     "@webgpu/types": "^0.1.40",
     "html-webpack-plugin": "^5.6.0",
     "ts-loader": "^9.5.1",
@@ -16,5 +17,8 @@
     "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^5.0.4"
   },
-  "packageManager": "yarn@4.2.2"
+  "packageManager": "yarn@4.2.2",
+  "dependencies": {
+    "earcut": "^2.2.4"
+  }
 }

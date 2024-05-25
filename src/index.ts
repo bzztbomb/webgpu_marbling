@@ -1,6 +1,9 @@
 // DONE: Draw one drop
-// Earcut
+// DONE: Earcut
 // Draw NxN drops
+
+import * as earcut from "earcut";
+
 // Draw NxN drops with different colors
 export {};
 
@@ -26,15 +29,13 @@ context.configure({
 });
 
 const NUM_DROP_VERTICES = 20;
-const vertices = new Float32Array(NUM_DROP_VERTICES * 2 + 1);
+const vertices = new Float32Array(NUM_DROP_VERTICES * 2);
 let idx = 0;
 for (let i = 0; i < NUM_DROP_VERTICES; i++) {
   const angle = i * ((Math.PI * 2) / NUM_DROP_VERTICES);
   vertices[idx++] = Math.cos(angle) * 0.8;
   vertices[idx++] = Math.sin(angle) * 0.8;
 }
-vertices[idx++] = 0;
-vertices[idx++] = 0;
 const vertexBuffer = device.createBuffer({
   label: 'drop vertices',
   size: vertices.byteLength,
@@ -50,13 +51,8 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
       }]
 };
 
-const indices = new Uint32Array(NUM_DROP_VERTICES * 3);
-idx = 0;
-for (let i = 0; i < NUM_DROP_VERTICES; i++) {
-  indices[idx++] = NUM_DROP_VERTICES;
-  indices[idx++] = (i + 0);
-  indices[idx++] = (i + 1) % NUM_DROP_VERTICES;
-}
+const triangles = earcut(vertices);
+const indices = new Uint32Array(triangles);
 const indexBuffer = device.createBuffer({
   label: 'drop indices',
   size: indices.byteLength,
