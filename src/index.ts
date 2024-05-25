@@ -1,6 +1,6 @@
 // DONE: Draw one drop
 // DONE: Earcut
-// Draw NxN drops
+// DONE: Draw NxN drops
 
 import * as earcut from "earcut";
 
@@ -29,13 +29,24 @@ context.configure({
 });
 
 const NUM_DROP_VERTICES = 20;
-const vertices = new Float32Array(NUM_DROP_VERTICES * 2);
-let idx = 0;
-for (let i = 0; i < NUM_DROP_VERTICES; i++) {
-  const angle = i * ((Math.PI * 2) / NUM_DROP_VERTICES);
-  vertices[idx++] = Math.cos(angle) * 0.8;
-  vertices[idx++] = Math.sin(angle) * 0.8;
+const NUM_DROPS = 4;
+
+const vertices = new Float32Array(NUM_DROPS * NUM_DROP_VERTICES * 2);
+
+function makeDrop(dropIndex: number, x: number, y: number, radius: number): void {
+  let idx = dropIndex * NUM_DROP_VERTICES * 2;
+  for (let i = 0; i < NUM_DROP_VERTICES; i++) {
+    const angle = i * ((Math.PI * 2) / NUM_DROP_VERTICES);
+    vertices[idx++] = Math.cos(angle) * radius + x;
+    vertices[idx++] = Math.sin(angle) * radius + y;
+  }  
 }
+
+makeDrop(0, -0.5, -0.5, 0.25);
+makeDrop(1, 0.5, -0.5, 0.25);
+makeDrop(2, -0.5, 0.5, 0.25);
+makeDrop(3, 0.5, 0.5, 0.25);
+
 const vertexBuffer = device.createBuffer({
   label: 'drop vertices',
   size: vertices.byteLength,
@@ -51,7 +62,13 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
       }]
 };
 
-const triangles = earcut(vertices);
+const triangles = [];
+for (let i = 0; i < NUM_DROPS; i++) {
+  const verts = vertices.slice(i * NUM_DROP_VERTICES * 2, (i+1) * NUM_DROP_VERTICES * 2);
+  const tris = earcut(verts);
+  const offset = i * NUM_DROP_VERTICES;
+  triangles.push(...tris.map(i => i + offset));
+}
 const indices = new Uint32Array(triangles);
 const indexBuffer = device.createBuffer({
   label: 'drop indices',
