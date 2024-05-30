@@ -7,8 +7,9 @@
 // DONE: Cleanup
 // DONE: https://people.csail.mit.edu/jaffer/Marbling/Dropping-Paint
 // DONE: https://tchayen.github.io/posts/triangulation-of-polygons
-// TODO: Optimize simpleEarcut (get rid of vertices.slice())
-// TODO: Clean up simpleEarcut (kill one call functions, etc..)
+// DONE: Optimize simpleEarcut (get rid of vertices.slice())
+// TODO: Clean up simpleEarcut (get rid of removeNode and isEar)
+// TODO: Port earcut to webgpu
 import { simpleEarcut } from "./simpleEarcut";
 
 // Draw NxN drops with different colors
@@ -17,7 +18,7 @@ export {};
 //
 // Drop simulation
 //
-const NUM_DROP_VERTICES = 100;
+const NUM_DROP_VERTICES = 64;
 const NUM_DROPS = 256;
 const TRIANGLES_GENERATED = (NUM_DROP_VERTICES - 2);
 
@@ -42,8 +43,7 @@ function makeDrop(dropIndex: number, x: number, y: number, radius: number, r: nu
 }
 
 function triangulateDrop(dropIndex: number) {
-  const verts = vertices.slice(dropIndex * NUM_DROP_VERTICES * 2, (dropIndex+1) * NUM_DROP_VERTICES * 2);
-  simpleEarcut(verts, dropIndex * NUM_DROP_VERTICES, indices, TRIANGLES_GENERATED * 3 * dropIndex);
+  simpleEarcut(vertices, dropIndex * NUM_DROP_VERTICES, NUM_DROP_VERTICES, indices, TRIANGLES_GENERATED * 3 * dropIndex);
 }
 
 for (let i = 0; i < NUM_DROPS; i++) {

@@ -1,8 +1,7 @@
 let prevVert: Uint16Array;
 let nextVert: Uint16Array;
 
-export function simpleEarcut(vertices: Float32Array, vertexOffset: number, target: Uint32Array, targetOffset: number): boolean {
-  const numVerts = vertices.length / 2;
+export function simpleEarcut(vertices: Float32Array, vertexOffset: number, numVerts: number, target: Uint32Array, targetOffset: number): boolean {
   if (!prevVert || prevVert.length < numVerts) {
     prevVert = new Uint16Array(numVerts);
     nextVert = new Uint16Array(numVerts);
@@ -27,7 +26,7 @@ export function simpleEarcut(vertices: Float32Array, vertexOffset: number, targe
   }
 
   const getVert = (i: number): [a: number, b: number] => {
-    const idx = i * 2;
+    const idx = i * 2 + vertexOffset * 2;
     return [vertices[idx], vertices[idx+1]];
   }
 
@@ -59,13 +58,6 @@ export function simpleEarcut(vertices: Float32Array, vertexOffset: number, targe
     return true;
   }
 
-  const removeNode = (i: number): void => {
-    const prev = prevVert[i];
-    const next = nextVert[i];
-    nextVert[prev] = next;
-    prevVert[next] = prev;
-  }
-
   let outIdx = targetOffset;
   let curr = 0;
   let next = 1;
@@ -76,10 +68,17 @@ export function simpleEarcut(vertices: Float32Array, vertexOffset: number, targe
 
   while (prev !== next && loops++ < maxLoops) {
     if (isEar(curr)) {
-      target[outIdx++] = prevVert[curr] + vertexOffset;
+      const prevVertex = prevVert[curr];
+      const nextVertex = nextVert[curr];
+      
+      // Output the triangle
+      target[outIdx++] = prevVertex + vertexOffset;
       target[outIdx++] = curr + vertexOffset;
-      target[outIdx++] = nextVert[curr] + vertexOffset;
-      removeNode(curr);
+      target[outIdx++] = nextVertex + vertexOffset;
+
+      // Remove the node from the linked list
+      nextVert[prevVertex] = next;
+      prevVert[nextVertex] = prev;  
     }
     curr = next;
     prev = prevVert[curr];
