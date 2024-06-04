@@ -1,6 +1,6 @@
-const MAX_DROPS: u32 = 256;
-const NUM_DROP_VERTICES: u32 = 256;
-const TRIANGLES_GENERATED: u32 = NUM_DROP_VERTICES - 2;
+const NUM_DROPS: u32 = #NUM_DROPS;
+const NUM_DROP_VERTICES: u32 = #NUM_DROP_VERTICES;
+const TRIANGLES_GENERATED: u32 = #TRIANGLES_GENERATED;
 
 @group(0) @binding(0) var<storage> vertices: array<vec2f>;
 @group(0) @binding(1) var<storage, read_write> triangles: array<u32>;
@@ -8,7 +8,7 @@ const TRIANGLES_GENERATED: u32 = NUM_DROP_VERTICES - 2;
 @compute
 @workgroup_size(32)
 fn computeMain(@builtin(global_invocation_id) drop: vec3u) {
-  if (drop.x >= MAX_DROPS) {
+  if (drop.x >= NUM_DROPS) {
     return;
   }
   let vertexOffset = drop.x * NUM_DROP_VERTICES;

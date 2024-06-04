@@ -1,7 +1,10 @@
 // DONE: Get canvas resizing working ;)
 // DONE: Port simpleEarcut to webgpu
+// DONE: Add #defines for shaders (MAX_DROPS, workgroup_size, etc)
+// TODO: Port simulateDrop to gpu
   
 import earcutShader from './earcut.wgsl';
+import { preprocess } from './preprocessor';
 
 export {};
 
@@ -11,6 +14,13 @@ export {};
 const NUM_DROP_VERTICES = 256;
 const NUM_DROPS = 256;
 const TRIANGLES_GENERATED = (NUM_DROP_VERTICES - 2);
+
+const ShaderConsts = {
+  NUM_DROP_VERTICES: NUM_DROP_VERTICES,
+  NUM_DROPS: NUM_DROPS,
+  TRIANGLES_GENERATED: TRIANGLES_GENERATED,
+};
+
 const UNIFORM_CURRENT_DROP = NUM_DROPS * 4;
 const UNIFORM_ASPECT_RATIO_X = NUM_DROPS * 4 + 2;
 const UNIFORM_ASPECT_RATIO_Y = NUM_DROPS * 4 + 3;
@@ -210,7 +220,10 @@ const dropShaderModule = device.createShaderModule({
 });
 
 const EARCUT_WORKGROUP_SIZE = 32;
-const earcutShaderModule = device.createShaderModule({ label: 'Earcut compute module', ...earcutShader});
+const earcutShaderModule = device.createShaderModule({ 
+  label: 'Earcut compute module', 
+  code: preprocess(earcutShader.code, ShaderConsts),
+});
 
 const dropBindGroupLayout = device.createBindGroupLayout({
   label: 'drop bind group layout',
@@ -337,3 +350,4 @@ async function draw() {
 
 
 
+console.log(preprocess('#test #test\n#meow', { test: 'ok', meow: 'cat' }));
