@@ -1,13 +1,14 @@
 // DONE: Get canvas resizing working ;)
-// TODO: Port simpleEarcut to webgpu
-import { simpleEarcut } from "./simpleEarcut";
+// DONE: Port simpleEarcut to webgpu
+  
+import earcutShader from './earcut.wgsl';
 
 export {};
 
 //
 // Drop simulation
 //
-const NUM_DROP_VERTICES = 64;
+const NUM_DROP_VERTICES = 256;
 const NUM_DROPS = 256;
 const TRIANGLES_GENERATED = (NUM_DROP_VERTICES - 2);
 const UNIFORM_CURRENT_DROP = NUM_DROPS * 4;
@@ -39,13 +40,8 @@ function makeDrop(dropIndex: number, x: number, y: number, radius: number, r: nu
   uniforms[colorIndex++] = 1.0;
 }
 
-function triangulateDrop(dropIndex: number) {
-  simpleEarcut(vertices, dropIndex * NUM_DROP_VERTICES, NUM_DROP_VERTICES, indices, TRIANGLES_GENERATED * 3 * dropIndex);
-}
-
 for (let i = 0; i < NUM_DROPS; i++) {
   makeDrop(i, 0, 0, 0.25);
-  triangulateDrop(i);
 }
 
 function handleClick(ix: number, iy: number): void {
@@ -54,9 +50,6 @@ function handleClick(ix: number, iy: number): void {
   const y = iy / uniforms[UNIFORM_ASPECT_RATIO_Y];
   simulateDrop(x, y, radius);
   makeDrop(currentDrop, x, y, radius, Math.random(), Math.random(), Math.random());
-  for (let i = 0; i < NUM_DROPS; i++) {
-    triangulateDrop(i);
-  }
   currentDrop++;
   if (currentDrop >= NUM_DROPS) {
     currentDrop = 0;
@@ -105,9 +98,38 @@ canvas.onclick = (ev: MouseEvent) => {
   updateBuffersAndDraw();
 }
 
+const observer = new ResizeObserver(elements => {
+  for (const element of elements) {
+    const box = element.devicePixelContentBoxSize ?? element.contentBoxSize;
+    const width = box[0].inlineSize;
+    const height = box[0].blockSize;
+    const canvas = element.target as HTMLCanvasElement;
+    canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
+    canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
+    if (depthTexture) {
+      depthTexture.destroy();
+    }
+    depthTexture = device.createTexture({
+      size: [canvas.width, canvas.height],
+      format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT
+    });
+  }
+  uniforms[UNIFORM_ASPECT_RATIO_X] = canvas.height >= canvas.width ? canvas.height / canvas.width : 1.0;
+  uniforms[UNIFORM_ASPECT_RATIO_Y] = canvas.width >= canvas.height ? canvas.width / canvas.height : 1.0;
+  updateBuffersAndDraw(); // just need uniform buffer, but meh
+});
+try {
+  observer.observe(canvas, { box: 'device-pixel-content-box' });
+} catch {
+  // Handle Safari
+  observer.observe(canvas, { box: 'content-box' });
+}
+
+
 function updateBuffersAndDraw() {
   device.queue.writeBuffer(vertexBuffer, 0, vertices);
-  device.queue.writeBuffer(indexBuffer, 0, indices);
+  // device.queue.writeBuffer(indexBuffer, 0, indices);
   device.queue.writeBuffer(uniformBuffer, 0, uniforms);
   draw();
 }
@@ -122,7 +144,7 @@ context.configure({
 const vertexBuffer = device.createBuffer({
   label: 'drop vertices',
   size: vertices.byteLength,
-  usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+  usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 });
 device.queue.writeBuffer(vertexBuffer, 0, vertices);
 const vertexBufferLayout: GPUVertexBufferLayout = {
@@ -137,9 +159,9 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
 const indexBuffer = device.createBuffer({
   label: 'drop indices',
   size: indices.byteLength,
-  usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST
+  usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
  });
-device.queue.writeBuffer(indexBuffer, 0, indices);
+ device.queue.writeBuffer(indexBuffer, 0, indices);
 
 const uniformBuffer = device.createBuffer({
   label: 'drop colors',
@@ -148,7 +170,7 @@ const uniformBuffer = device.createBuffer({
 });
 device.queue.writeBuffer(uniformBuffer, 0, uniforms);
 
-const shaderModule = device.createShaderModule({
+const dropShaderModule = device.createShaderModule({
   label: 'drop shader',
   code: `
     struct VertexOutput {
@@ -187,13 +209,32 @@ const shaderModule = device.createShaderModule({
   `
 });
 
-const bindGroupLayout = device.createBindGroupLayout({
+const EARCUT_WORKGROUP_SIZE = 32;
+const earcutShaderModule = device.createShaderModule({ label: 'Earcut compute module', ...earcutShader});
+
+const dropBindGroupLayout = device.createBindGroupLayout({
   label: 'drop bind group layout',
   entries: [
     {
       binding: 0,
       visibility: GPUShaderStage.VERTEX,
       buffer: {}
+    },
+  ]
+});
+
+const earcutBindGroupLayout = device.createBindGroupLayout({
+  label: 'earcut bind group layout',
+  entries: [
+    {
+      binding: 0,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: { type: "read-only-storage" },
+    },
+    {
+      binding: 1,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: { type: "storage" },
     }
   ]
 });
@@ -206,14 +247,14 @@ let depthTexture = device.createTexture({
 
 const dropPipeline = device.createRenderPipeline({
   label: 'drop pipeline',
-  layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout]}),
+  layout: device.createPipelineLayout({ bindGroupLayouts: [dropBindGroupLayout]}),
   vertex: {
-    module: shaderModule,
+    module: dropShaderModule,
     entryPoint: 'vertexMain',
     buffers: [vertexBufferLayout],
   },
   fragment: {
-    module: shaderModule,
+    module: dropShaderModule,
     entryPoint: 'fragmentMain',
     targets: [{
       format,
@@ -226,47 +267,49 @@ const dropPipeline = device.createRenderPipeline({
   }
 });
 
-const bindGroup = device.createBindGroup({
+const dropBindGroup = device.createBindGroup({
   label: 'Drop bind group',
-  layout: bindGroupLayout,
+  layout: dropBindGroupLayout,
   entries: [
     {
       binding: 0,
       resource: { buffer: uniformBuffer }
+    },
+  ]
+});
+
+const earcutBindGroup = device.createBindGroup({
+  label: 'earcut bind group',
+  layout: earcutBindGroupLayout,
+  entries: [
+    {
+      binding: 0,
+      resource: { buffer: vertexBuffer }
+    },
+    {
+      binding: 1,
+      resource: { buffer: indexBuffer }
     }
   ]
 });
 
-const observer = new ResizeObserver(elements => {
-  for (const element of elements) {
-    const box = element.devicePixelContentBoxSize ?? element.contentBoxSize;
-    const width = box[0].inlineSize;
-    const height = box[0].blockSize;
-    const canvas = element.target as HTMLCanvasElement;
-    canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
-    canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
-    if (depthTexture) {
-      depthTexture.destroy();
-    }
-    depthTexture = device.createTexture({
-      size: [canvas.width, canvas.height],
-      format: 'depth24plus',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT
-    });
+const earcutPipeline = device.createComputePipeline({
+  label: 'earcut pipeline',
+  layout: device.createPipelineLayout({ bindGroupLayouts: [earcutBindGroupLayout ]}),
+  compute: {
+    module: earcutShaderModule,
+    entryPoint: "computeMain",
   }
-  uniforms[UNIFORM_ASPECT_RATIO_X] = canvas.height >= canvas.width ? canvas.height / canvas.width : 1.0;
-  uniforms[UNIFORM_ASPECT_RATIO_Y] = canvas.width >= canvas.height ? canvas.width / canvas.height : 1.0;
-  updateBuffersAndDraw(); // just need uniform buffer, but meh
-});
-try {
-  observer.observe(canvas, { box: 'device-pixel-content-box' });
-} catch {
-  // Handle Safari
-  observer.observe(canvas, { box: 'content-box' });
-}
+})
 
-function draw() {
+async function draw() {
   const encoder = device.createCommandEncoder();
+  const computePass = encoder.beginComputePass();
+  computePass.setPipeline(earcutPipeline);
+  computePass.setBindGroup(0, earcutBindGroup);
+  computePass.dispatchWorkgroups(Math.ceil(NUM_DROPS / EARCUT_WORKGROUP_SIZE));
+  computePass.end();
+
   const pass = encoder.beginRenderPass({
     colorAttachments: 
       [{
@@ -285,11 +328,12 @@ function draw() {
   pass.setPipeline(dropPipeline);
   pass.setVertexBuffer(0, vertexBuffer);
   pass.setIndexBuffer(indexBuffer, 'uint32');
-  pass.setBindGroup(0, bindGroup);
+  pass.setBindGroup(0, dropBindGroup);
   pass.drawIndexed(indices.length);
   pass.end();
   const commandBuffer = encoder.finish();
   device.queue.submit([commandBuffer]);  
 }
 
-draw();
+
+
