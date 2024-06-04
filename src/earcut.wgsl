@@ -6,7 +6,7 @@ const TRIANGLES_GENERATED: u32 = #TRIANGLES_GENERATED;
 @group(0) @binding(1) var<storage, read_write> triangles: array<u32>;
 
 @compute
-@workgroup_size(32)
+@workgroup_size(#EARCUT_WORKGROUP_SIZE)
 fn computeMain(@builtin(global_invocation_id) drop: vec3u) {
   if (drop.x >= NUM_DROPS) {
     return;

@@ -3,8 +3,10 @@
 // DONE: Add #defines for shaders (MAX_DROPS, workgroup_size, etc)
 // TODO: Port simulateDrop to gpu
   
-import earcutShader from './earcut.wgsl';
 import { preprocess } from './preprocessor';
+
+import earcutShader from './earcut.wgsl';
+import dropShader from './drop.wgsl';
 
 export {};
 
@@ -14,11 +16,14 @@ export {};
 const NUM_DROP_VERTICES = 256;
 const NUM_DROPS = 256;
 const TRIANGLES_GENERATED = (NUM_DROP_VERTICES - 2);
+const NUM_INDICES = NUM_DROPS * TRIANGLES_GENERATED * 3;
+const EARCUT_WORKGROUP_SIZE = 32;
 
 const ShaderConsts = {
   NUM_DROP_VERTICES: NUM_DROP_VERTICES,
   NUM_DROPS: NUM_DROPS,
   TRIANGLES_GENERATED: TRIANGLES_GENERATED,
+  EARCUT_WORKGROUP_SIZE: EARCUT_WORKGROUP_SIZE,
 };
 
 const UNIFORM_CURRENT_DROP = NUM_DROPS * 4;
@@ -26,7 +31,6 @@ const UNIFORM_ASPECT_RATIO_X = NUM_DROPS * 4 + 2;
 const UNIFORM_ASPECT_RATIO_Y = NUM_DROPS * 4 + 3;
 
 const vertices = new Float32Array(NUM_DROPS * NUM_DROP_VERTICES * 2);
-const indices = new Uint32Array(NUM_DROPS * TRIANGLES_GENERATED * 3);
 const uniforms = new Float32Array((NUM_DROPS + 2) * 4);
 
 // Init uniforms for currentDrop and aspect ratio
@@ -139,7 +143,6 @@ try {
 
 function updateBuffersAndDraw() {
   device.queue.writeBuffer(vertexBuffer, 0, vertices);
-  // device.queue.writeBuffer(indexBuffer, 0, indices);
   device.queue.writeBuffer(uniformBuffer, 0, uniforms);
   draw();
 }
@@ -168,10 +171,9 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
 
 const indexBuffer = device.createBuffer({
   label: 'drop indices',
-  size: indices.byteLength,
+  size: NUM_INDICES * 4,
   usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
  });
- device.queue.writeBuffer(indexBuffer, 0, indices);
 
 const uniformBuffer = device.createBuffer({
   label: 'drop colors',
@@ -182,44 +184,9 @@ device.queue.writeBuffer(uniformBuffer, 0, uniforms);
 
 const dropShaderModule = device.createShaderModule({
   label: 'drop shader',
-  code: `
-    struct VertexOutput {
-      @builtin(position) pos: vec4f,
-      @location(0) color: vec3f,
-    }
-
-    struct DropUniforms {
-      colors: array<vec3f, ${NUM_DROPS}>,
-      currentDrop: f32,
-      aspectRatio: vec2f,
-    }
-
-    @group(0) @binding(0) var<uniform> drops: DropUniforms;
-
-    @vertex
-    fn vertexMain(
-      @builtin(vertex_index) vertIndex: u32,
-      @location(0) pos: vec2f
-    ) -> VertexOutput {
-      var output: VertexOutput;
-      let dropIndex = vertIndex / ${NUM_DROP_VERTICES};
-      var z = f32(dropIndex) - drops.currentDrop;
-      if (z < 0) {
-        z += ${NUM_DROPS};
-      }
-      output.pos = vec4f(pos * drops.aspectRatio, (1.0 - (z / ${NUM_DROPS})) * 0.99, 1);
-      output.color = drops.colors[vertIndex / ${NUM_DROP_VERTICES}];
-      return output;
-    }
-
-    @fragment
-    fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
-      return vec4f(input.color, 1);
-    }
-  `
+  code: preprocess(dropShader.code, ShaderConsts)
 });
 
-const EARCUT_WORKGROUP_SIZE = 32;
 const earcutShaderModule = device.createShaderModule({ 
   label: 'Earcut compute module', 
   code: preprocess(earcutShader.code, ShaderConsts),
@@ -342,12 +309,8 @@ async function draw() {
   pass.setVertexBuffer(0, vertexBuffer);
   pass.setIndexBuffer(indexBuffer, 'uint32');
   pass.setBindGroup(0, dropBindGroup);
-  pass.drawIndexed(indices.length);
+  pass.drawIndexed(NUM_INDICES);
   pass.end();
   const commandBuffer = encoder.finish();
   device.queue.submit([commandBuffer]);  
 }
-
-
-
-console.log(preprocess('#test #test\n#meow', { test: 'ok', meow: 'cat' }));
