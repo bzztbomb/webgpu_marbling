@@ -21,7 +21,7 @@ fn vertexMain(
 ) -> VertexOutput {
   var output: VertexOutput;
   let dropIndex = vertIndex / NUM_DROP_VERTICES;
-  var z = f32(dropIndex) - drops.currentDrop;
+  var z = f32(dropIndex) - drops.currentDrop - 1;
   if (z < 0) {
     z += f32(NUM_DROPS);
   }
