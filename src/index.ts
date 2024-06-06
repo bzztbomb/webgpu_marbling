@@ -3,7 +3,8 @@
 // DONE: Add #defines for shaders (MAX_DROPS, workgroup_size, etc)
 // DONE: Port simulateDrop to gpu
 // DONE: Interpolate between last and current
-// TODO: Textured drops
+// DONE: Textured drops
+// TODO: More than one texture
 // TODO: Bvmble
 
 import { preprocess } from './preprocessor';
@@ -76,6 +77,14 @@ function handleClick(ix: number, iy: number): void {
   draw();
 }
 
+async function loadImageBitmap(url: string): Promise<ImageBitmap> {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return await createImageBitmap(blob, { colorSpaceConversion: 'none' });
+}
+
+const image = await loadImageBitmap('/sacagawea_0001.png');
+
 //
 // WebGPU stuff
 // 
@@ -138,6 +147,21 @@ context.configure({
   format
 });
 
+const texture = device.createTexture({
+  label: 'image',
+  format: 'rgba8unorm',
+  size: [image.width, image.height],
+  usage: GPUTextureUsage.TEXTURE_BINDING |
+         GPUTextureUsage.COPY_DST |
+         GPUTextureUsage.RENDER_ATTACHMENT,
+});
+
+device.queue.copyExternalImageToTexture(
+  { source: image, flipY: true },
+  { texture },
+  { width: image.width, height: image.height },
+);
+
 const vertices = new Float32Array(NUM_DROPS * NUM_DROP_VERTICES * 2);
 const vertexBuffers = [0, 1].map(i => device.createBuffer({
   label: `drop vertices ${i}`,
@@ -194,6 +218,16 @@ const dropBindGroupLayout = device.createBindGroupLayout({
       binding: 1,
       visibility: GPUShaderStage.VERTEX,
       buffer: { type: 'read-only-storage' }
+    },
+    {
+      binding: 2,
+      visibility: GPUShaderStage.FRAGMENT,
+      sampler: { type: 'filtering' }
+    },
+    {
+      binding: 3,
+      visibility: GPUShaderStage.FRAGMENT,
+      texture: { sampleType: 'float' }
     }
   ]
 });
@@ -274,6 +308,14 @@ const dropBindGroups = [1, 0].map(vb => device.createBindGroup({
     {
       binding: 1,
       resource: { buffer: vertexBuffers[vb] }
+    },
+    {
+      binding: 2,
+      resource: device.createSampler(),
+    },
+    {
+      binding: 3,
+      resource: texture.createView(),
     }
   ]
 }));
