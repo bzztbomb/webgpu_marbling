@@ -2,9 +2,9 @@
 // DONE: Port simpleEarcut to webgpu
 // DONE: Add #defines for shaders (MAX_DROPS, workgroup_size, etc)
 // DONE: Port simulateDrop to gpu
-// TODO: Interpolate between last and current
+// DONE: Interpolate between last and current
 // TODO: Textured drops
-// TODO: Bumble^2
+// TODO: Bvmble
 
 import { preprocess } from './preprocessor';
 
@@ -32,11 +32,12 @@ const ShaderConsts = {
   SIMULATE_WORKGROUP_SIZE: SIMULATE_WORKGROUP_SIZE,
 };
 
-const NUM_UNIFORMS = 4;
-const UNIFORM_CURRENT_DROP = NUM_DROPS * 4;
-const UNIFORM_ASPECT_RATIO_X = NUM_DROPS * 4 + 2;
+const NUM_UNIFORMS = 5;
+const UNIFORM_CURRENT_DROP = NUM_DROPS * 4; // f32 - 4bytes
+const UNIFORM_ASPECT_RATIO_X = NUM_DROPS * 4 + 2; // vec2 -
 const UNIFORM_ASPECT_RATIO_Y = NUM_DROPS * 4 + 3;
 const UNIFORM_DROP_X_Y_R = NUM_DROPS * 4 + 4;
+const UNIFORM_TIME = NUM_DROPS * 4 + 7;
 
 const uniforms = new Float32Array((NUM_DROPS + NUM_UNIFORMS) * 4);
 
@@ -44,6 +45,7 @@ const uniforms = new Float32Array((NUM_DROPS + NUM_UNIFORMS) * 4);
 uniforms[UNIFORM_CURRENT_DROP] = 0;
 uniforms[UNIFORM_ASPECT_RATIO_X] = 1.0;
 uniforms[UNIFORM_ASPECT_RATIO_Y] = 1.0;
+uniforms[UNIFORM_TIME] = 0.0;
 
 let currentDrop = 0;
 let simulateRequired = false;
@@ -71,6 +73,7 @@ function handleClick(ix: number, iy: number): void {
   makeDrop(currentDrop, x, y, radius, Math.random(), Math.random(), Math.random());
   uniforms[NUM_DROPS * 4] = currentDrop;
   simulateRequired = true;
+  draw();
 }
 
 //
@@ -98,7 +101,6 @@ canvas.onclick = (ev: MouseEvent) => {
   const x = (cx / rect.width) * 2.0 - 1.0;
   const y = -((cy / rect.height) * 2.0 - 1.0);
   handleClick(x, y);
-  updateBuffersAndDraw();
 }
 
 const observer = new ResizeObserver(elements => {
@@ -120,19 +122,13 @@ const observer = new ResizeObserver(elements => {
   }
   uniforms[UNIFORM_ASPECT_RATIO_X] = canvas.height >= canvas.width ? canvas.height / canvas.width : 1.0;
   uniforms[UNIFORM_ASPECT_RATIO_Y] = canvas.width >= canvas.height ? canvas.width / canvas.height : 1.0;
-  updateBuffersAndDraw(); // just need uniform buffer, but meh
+  draw();
 });
 try {
   observer.observe(canvas, { box: 'device-pixel-content-box' });
 } catch {
   // Handle Safari
   observer.observe(canvas, { box: 'content-box' });
-}
-
-
-function updateBuffersAndDraw() {
-  device.queue.writeBuffer(uniformBuffer, 0, uniforms);
-  draw();
 }
 
 const context = canvas.getContext('webgpu');
@@ -194,6 +190,11 @@ const dropBindGroupLayout = device.createBindGroupLayout({
       visibility: GPUShaderStage.VERTEX,
       buffer: {}
     },
+    {
+      binding: 1,
+      visibility: GPUShaderStage.VERTEX,
+      buffer: { type: 'read-only-storage' }
+    }
   ]
 });
 
@@ -262,7 +263,7 @@ const dropPipeline = device.createRenderPipeline({
   }
 });
 
-const dropBindGroup = device.createBindGroup({
+const dropBindGroups = [1, 0].map(vb => device.createBindGroup({
   label: 'Drop bind group',
   layout: dropBindGroupLayout,
   entries: [
@@ -270,8 +271,12 @@ const dropBindGroup = device.createBindGroup({
       binding: 0,
       resource: { buffer: uniformBuffer }
     },
+    {
+      binding: 1,
+      resource: { buffer: vertexBuffers[vb] }
+    }
   ]
-});
+}));
 
 const earcutBindGroups = [0, 1].map(vb => device.createBindGroup({
   label: 'earcut bind group',
@@ -326,10 +331,20 @@ const simulatePipeline = device.createComputePipeline({
 })
 
 let pingPong = 0;
+let start = performance.now();
 async function draw() {
+  if (simulateRequired) {
+    start = performance.now();
+  }
+  const elapsed = performance.now() - start;
+  uniforms[UNIFORM_TIME] = Math.min(elapsed / 1000, 1);
+  device.queue.writeBuffer(uniformBuffer, 0, uniforms);
+
   const encoder = device.createCommandEncoder();
 
   if (simulateRequired) {
+    pingPong = 1 - pingPong;
+
     const simulatePass = encoder.beginComputePass();
     simulatePass.setPipeline(simulatePipeline);
     simulatePass.setBindGroup(0, simulateBindGroups[pingPong]);
@@ -341,6 +356,10 @@ async function draw() {
     earcutPass.setBindGroup(0, earcutBindGroups[pingPong]);
     earcutPass.dispatchWorkgroups(Math.ceil(NUM_DROPS / EARCUT_WORKGROUP_SIZE));
     earcutPass.end();
+
+    start = performance.now();
+
+    simulateRequired = false;
   }
 
   const pass = encoder.beginRenderPass({
@@ -361,13 +380,14 @@ async function draw() {
   pass.setPipeline(dropPipeline);
   pass.setVertexBuffer(0, vertexBuffers[pingPong]);
   pass.setIndexBuffer(indexBuffer, 'uint32');
-  pass.setBindGroup(0, dropBindGroup);
+  pass.setBindGroup(0, dropBindGroups[pingPong]);
   pass.drawIndexed(NUM_INDICES);
   pass.end();
   const commandBuffer = encoder.finish();
   device.queue.submit([commandBuffer]);
-  if (simulateRequired) {
-    pingPong = 1 - pingPong;
-    simulateRequired = false;
+  if (elapsed < 1000) {
+    requestAnimationFrame(draw);
   }
 }
+
+requestAnimationFrame(draw);
