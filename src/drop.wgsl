@@ -1,10 +1,12 @@
 const NUM_DROPS: u32 = #NUM_DROPS;
 const NUM_DROP_VERTICES: u32 = #NUM_DROP_VERTICES;
+const NUM_IMAGES: u32 = #NUM_IMAGES;
 
 struct VertexOutput {
   @builtin(position) pos: vec4f,
   @location(0) color: vec3f,
   @location(1) uv: vec2f,
+  @location(2) @interpolate(flat) dropIndex: u32,
 }
 
 struct DropUniforms {
@@ -18,7 +20,7 @@ struct DropUniforms {
 @group(0) @binding(0) var<uniform> drops: DropUniforms;
 @group(0) @binding(1) var<storage> old_vertices: array<vec2f>;
 @group(0) @binding(2) var dropSampler: sampler;
-@group(0) @binding(3) var dropTexture: texture_2d<f32>;
+@group(0) @binding(3) var dropTexture: texture_2d_array<f32>;
 
 @vertex
 fn vertexMain(
@@ -40,10 +42,11 @@ fn vertexMain(
   let i = f32(vertIndex % NUM_DROP_VERTICES);
   let angle = i * ((radians(180) * 2) / f32(NUM_DROP_VERTICES));
   output.uv = vec2f(cos(angle), sin(angle)) * 0.5 + 0.5;
+  output.dropIndex = dropIndex;
   return output;
 }
 
 @fragment
 fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
-  return textureSample(dropTexture, dropSampler, input.uv);
+  return textureSample(dropTexture, dropSampler, input.uv, input.dropIndex % NUM_IMAGES);
 }

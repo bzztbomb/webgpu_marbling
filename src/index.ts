@@ -4,7 +4,8 @@
 // DONE: Port simulateDrop to gpu
 // DONE: Interpolate between last and current
 // DONE: Textured drops
-// TODO: More than one texture
+// DONE: More than one texture
+// TODO: Support gifs?
 // TODO: Bvmble
 
 import { preprocess } from './preprocessor';
@@ -31,6 +32,7 @@ const ShaderConsts = {
   TRIANGLES_GENERATED: TRIANGLES_GENERATED,
   EARCUT_WORKGROUP_SIZE: EARCUT_WORKGROUP_SIZE,
   SIMULATE_WORKGROUP_SIZE: SIMULATE_WORKGROUP_SIZE,
+  NUM_IMAGES: 2,
 };
 
 const NUM_UNIFORMS = 5;
@@ -83,7 +85,10 @@ async function loadImageBitmap(url: string): Promise<ImageBitmap> {
   return await createImageBitmap(blob, { colorSpaceConversion: 'none' });
 }
 
-const image = await loadImageBitmap('/sacagawea_0001.png');
+const images = await Promise.all([
+  loadImageBitmap('/sacagawea_0001.png'),
+  loadImageBitmap('/burger_0002.png'),
+]);
 
 //
 // WebGPU stuff
@@ -147,20 +152,27 @@ context.configure({
   format
 });
 
+
 const texture = device.createTexture({
   label: 'image',
   format: 'rgba8unorm',
-  size: [image.width, image.height],
+  size: {
+    width: images[0].width, 
+    height: images[0].height,
+    depthOrArrayLayers: images.length
+  },
   usage: GPUTextureUsage.TEXTURE_BINDING |
          GPUTextureUsage.COPY_DST |
          GPUTextureUsage.RENDER_ATTACHMENT,
 });
 
-device.queue.copyExternalImageToTexture(
-  { source: image, flipY: true },
-  { texture },
-  { width: image.width, height: image.height },
-);
+images.forEach((img, index) => {
+  device.queue.copyExternalImageToTexture(
+    { source: img, flipY: true },
+    { texture, origin: { x: 0, y: 0, z: index } },
+    { width: img.width, height: img.height },
+  );  
+})
 
 const vertices = new Float32Array(NUM_DROPS * NUM_DROP_VERTICES * 2);
 const vertexBuffers = [0, 1].map(i => device.createBuffer({
@@ -227,7 +239,7 @@ const dropBindGroupLayout = device.createBindGroupLayout({
     {
       binding: 3,
       visibility: GPUShaderStage.FRAGMENT,
-      texture: { sampleType: 'float' }
+      texture: { sampleType: 'float', viewDimension: '2d-array' }
     }
   ]
 });
