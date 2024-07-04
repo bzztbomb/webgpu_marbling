@@ -6,15 +6,16 @@
 // DONE: Textured drops
 // DONE: More than one texture
 // DONE: Resize
+// DONE: Support gifs
 // TODO: Bvmble
-// TODO: Support gifs?
-
 
 import { preprocess } from './preprocessor';
 
 import earcutShader from './earcut.wgsl';
 import dropShader from './drop.wgsl';
 import simulateShader from './simulate.wgsl';
+import { decompressFrames, parseGIF } from 'gifuct-js';
+import { Decoder } from './gifdecoder';
 
 export {};
 
@@ -80,7 +81,6 @@ function handleClick(ix: number, iy: number): void {
   makeDrop(currentDrop, x, y, radius, Math.random(), Math.random(), Math.random());
   uniforms[NUM_DROPS * 4] = currentDrop;
   simulateRequired = true;
-  draw();
 }
 
 async function loadImageBitmap(url: string): Promise<ImageBitmap> {
@@ -139,7 +139,6 @@ const observer = new ResizeObserver(elements => {
   }
   uniforms[UNIFORM_ASPECT_RATIO_X] = canvas.height >= canvas.width ? canvas.height / canvas.width : 1.0;
   uniforms[UNIFORM_ASPECT_RATIO_Y] = canvas.width >= canvas.height ? canvas.width / canvas.height : 1.0;
-  draw();
 });
 try {
   observer.observe(canvas, { box: 'device-pixel-content-box' });
@@ -265,8 +264,8 @@ const pow2 = device.createTexture({
   usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
 });
 
-async function loadImageToSlot(url: string, slot: number): Promise<void> {
-  const image = await loadImageBitmap(url);
+async function loadImageToSlot(img: string | HTMLCanvasElement, slot: number): Promise<void> {
+  const image = (img instanceof HTMLCanvasElement) ? img : await loadImageBitmap(img);
   const nonPow2 = device.createTexture({
     label: 'non-square',
     format: 'rgba8unorm',
@@ -277,7 +276,7 @@ async function loadImageToSlot(url: string, slot: number): Promise<void> {
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
   });
   device.queue.copyExternalImageToTexture(
-    { source: image, flipY: true },
+    { source: image, flipY: !(img instanceof HTMLCanvasElement) },
     { texture: nonPow2 },
     { width: image.width,  height: image.height },
   );
@@ -634,9 +633,7 @@ function draw() {
   pass.end();
   const commandBuffer = encoder.finish();
   device.queue.submit([commandBuffer]);
-  if (elapsed < 1000) {
-    requestAnimationFrame(draw);
-  }
+  requestAnimationFrame(draw);
 }
 
 requestAnimationFrame(draw);
@@ -653,6 +650,24 @@ setInterval(() => {
   makeDrop(currentDrop, x, y, radius, Math.random(), Math.random(), Math.random());
   uniforms[NUM_DROPS * 4] = currentDrop;
   simulateRequired = true;
-  draw();
 }, 5000);
 
+// Load a gif
+let frameImageData: ImageData;
+var tempCanvas = document.createElement('canvas')
+var tempCtx = tempCanvas.getContext('2d');
+
+async function loadGif() {
+  const decoder = new Decoder();
+  await decoder.load('/tumblr_mtfhcpqz6H1sn8q7mo1_400.gif');
+  const frame = decoder.getNextFrame();
+  loadImageToSlot(frame, 0);
+  setInterval(() => {
+    const nextFrame = decoder.getNextFrame();
+    if (nextFrame) {
+      loadImageToSlot(nextFrame, 0);
+    }
+  }, 10);
+} 
+
+setTimeout(loadGif, 4000);

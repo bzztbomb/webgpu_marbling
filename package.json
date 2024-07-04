@@ -20,6 +20,7 @@
   },
   "packageManager": "yarn@4.2.2",
   "dependencies": {
-    "earcut": "^2.2.4"
+    "earcut": "^2.2.4",
+    "gifuct-js": "^2.1.2"
   }
 }
