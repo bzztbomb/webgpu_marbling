@@ -5,8 +5,10 @@
 // DONE: Interpolate between last and current
 // DONE: Textured drops
 // DONE: More than one texture
-// TODO: Support gifs?
+// DONE: Resize
 // TODO: Bvmble
+// TODO: Support gifs?
+
 
 import { preprocess } from './preprocessor';
 
@@ -19,12 +21,14 @@ export {};
 //
 // Drop simulation
 //
-const NUM_DROP_VERTICES = 256;
-const NUM_DROPS = 256;
+const NUM_DROP_VERTICES = 32;
+const NUM_DROPS = 32;
 const TRIANGLES_GENERATED = (NUM_DROP_VERTICES - 2);
 const NUM_INDICES = NUM_DROPS * TRIANGLES_GENERATED * 3;
 const EARCUT_WORKGROUP_SIZE = 32;
 const SIMULATE_WORKGROUP_SIZE = 32;
+const IMAGE_SIZE = 512;
+const NUM_IMAGES = 8;
 
 const ShaderConsts = {
   NUM_DROP_VERTICES: NUM_DROP_VERTICES,
@@ -87,7 +91,6 @@ async function loadImageBitmap(url: string): Promise<ImageBitmap> {
 
 const images = await Promise.all([
   loadImageBitmap('/sacagawea_0001.png'),
-  loadImageBitmap('/burger_0002.png'),
 ]);
 
 //
@@ -152,27 +155,209 @@ context.configure({
   format
 });
 
+const resizeModule = device.createShaderModule({
+  label: 'resizeModule',
+  code: `
+    @group(0) @binding(0) var<uniform> resize: vec2f;
+    @group(0) @binding(1) var s: sampler;
+    @group(0) @binding(2) var texture: texture_2d<f32>;
+
+    struct VertexOutput {
+      @builtin(position) pos: vec4f,
+      @location(0) uv: vec2f
+    }
+
+    @vertex fn vs(
+      @builtin(vertex_index) vertexIndex : u32
+    ) -> VertexOutput {
+      let pos = array(
+        vec2f(-1.0, -1.0), // upper left
+        vec2f(-1.0, 1.0), // lower left
+        vec2f( 1.0, 1.0), // lower right
+
+        vec2f( 1.0,  1.0),  // lower right
+        vec2f( 1.0,  -1.0), // upper right
+        vec2f(-1.0,  -1.0), // upper left 
+      );
+      let uv = array(
+        vec2f(0.0, 1.0), // upper left
+        vec2f(0.0, 0.0), // lower left
+        vec2f(1.0, 0.0), // lower right
+        vec2f(1.0, 0.0), // lower right
+        vec2f(1.0, 1.0), // upper right
+        vec2f(0.0, 1.0), // upper left
+      );
+      var output: VertexOutput;
+      output.pos = vec4f(pos[vertexIndex] * resize.xy, 0.0, 1.0);
+      output.uv = uv[vertexIndex];
+      return output;
+    }
+
+    @fragment fn fs(input: VertexOutput) -> @location(0) vec4f {
+      return textureSample(texture, s, input.uv);
+    }
+  `,
+});
+
+const resizeLayout = device.createBindGroupLayout({
+  label: 'resize layout',
+  entries: [
+    {
+      binding: 0,
+      visibility: GPUShaderStage.VERTEX,
+      buffer: { type: 'uniform'},
+    },
+    {
+      binding: 1,
+      visibility: GPUShaderStage.FRAGMENT,
+      sampler: { type: 'filtering'}
+    },
+    {
+      binding: 2,
+      visibility: GPUShaderStage.FRAGMENT,
+      texture: { sampleType: 'float', viewDimension: '2d' }
+    }
+  ]
+});
+
+const resizePipeline = device.createRenderPipeline({
+  label: 'resize pipeline',
+  layout: device.createPipelineLayout({ bindGroupLayouts: [resizeLayout]}),
+  vertex: {
+    entryPoint: 'vs',
+    module: resizeModule,
+  },
+  fragment: {
+    entryPoint: 'fs',
+    module: resizeModule,
+    targets: [{ 
+      format: 'rgba8unorm',
+      blend: {
+        color: {
+          srcFactor: 'one',
+          dstFactor: 'one-minus-src-alpha'
+        },
+        alpha: {
+          srcFactor: 'one',
+          dstFactor: 'one-minus-src-alpha'
+        },
+      },
+    }]
+  }
+});
+
+const resizeUniforms = new Float32Array(4);
+const resizeUniformBuffer = device.createBuffer({
+  label: 'resize  uniforms',
+  size: resizeUniforms.byteLength,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+});
+
+device.queue.writeBuffer(resizeUniformBuffer, 0, resizeUniforms);
+
+const pow2 = device.createTexture({
+  label: 'square',
+  format: 'rgba8unorm',
+  size: {
+    width: IMAGE_SIZE,
+    height: IMAGE_SIZE,
+  },
+  usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT
+});
+
+async function loadImageToSlot(url: string, slot: number): Promise<void> {
+  const image = await loadImageBitmap(url);
+  const nonPow2 = device.createTexture({
+    label: 'non-square',
+    format: 'rgba8unorm',
+    size: {
+      width: image.width,
+      height: image.height,
+    },
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+  });
+  device.queue.copyExternalImageToTexture(
+    { source: image, flipY: true },
+    { texture: nonPow2 },
+    { width: image.width,  height: image.height },
+  );
+  
+  resizeUniforms[1] = image.width > image.height ? IMAGE_SIZE / image.width : 1;
+  resizeUniforms[0] = image.height > image.width ? IMAGE_SIZE / image.height : 1;
+  resizeUniforms[2] = 1.0;
+  device.queue.writeBuffer(resizeUniformBuffer, 0, resizeUniforms);
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [{
+      view: pow2.createView(),
+      loadOp: 'clear',
+      clearValue: { r: 0, g: 0, b: 0.0, a: 0.0 },
+      storeOp: 'store',
+    }]
+  });
+  const resizeBindGroup = device.createBindGroup({
+    label: 'resize  bind group',
+    layout: resizeLayout,
+    entries: [
+      {
+        binding: 0,
+        resource: { buffer: resizeUniformBuffer },
+      },
+      {
+        binding: 1,
+        resource: device.createSampler(),
+      },
+      {
+        binding: 2,
+        resource: nonPow2.createView(),
+      }
+    ]
+  });
+  pass.setPipeline(resizePipeline);
+  pass.setBindGroup(0, resizeBindGroup);
+  pass.draw(6);
+  pass.end();
+  encoder.copyTextureToTexture({
+    texture: pow2  
+  }, 
+  {
+    texture,
+    origin: {
+      z: slot,
+    },
+  },
+  {
+    width: IMAGE_SIZE,
+    height: IMAGE_SIZE,
+  })
+  const commandBuffer = encoder.finish();
+  device.queue.submit([commandBuffer]);
+  nonPow2.destroy();
+}
+
+loadImageToSlot('/Chucky-Transparent-PNG.png', 0);
 
 const texture = device.createTexture({
   label: 'image',
   format: 'rgba8unorm',
   size: {
-    width: images[0].width, 
-    height: images[0].height,
-    depthOrArrayLayers: images.length
+    width: IMAGE_SIZE,
+    height: IMAGE_SIZE,
+    depthOrArrayLayers: NUM_IMAGES,
   },
   usage: GPUTextureUsage.TEXTURE_BINDING |
          GPUTextureUsage.COPY_DST |
          GPUTextureUsage.RENDER_ATTACHMENT,
 });
 
-images.forEach((img, index) => {
+for (let i = 0; i < NUM_IMAGES; i++) {
+  const img = images[0];
   device.queue.copyExternalImageToTexture(
     { source: img, flipY: true },
-    { texture, origin: { x: 0, y: 0, z: index } },
+    { texture, origin: { x: 0, y: 0, z: i } },
     { width: img.width, height: img.height },
   );  
-})
+}
 
 const vertices = new Float32Array(NUM_DROPS * NUM_DROP_VERTICES * 2);
 const vertexBuffers = [0, 1].map(i => device.createBuffer({
@@ -300,6 +485,16 @@ const dropPipeline = device.createRenderPipeline({
     entryPoint: 'fragmentMain',
     targets: [{
       format,
+      blend: {
+        color: {
+          srcFactor: 'one',
+          dstFactor: 'one-minus-src-alpha'
+        },
+        alpha: {
+          srcFactor: 'one',
+          dstFactor: 'one-minus-src-alpha'
+        },
+      },
     }]
   },
   depthStencil: {
@@ -386,7 +581,7 @@ const simulatePipeline = device.createComputePipeline({
 
 let pingPong = 0;
 let start = performance.now();
-async function draw() {
+function draw() {
   if (simulateRequired) {
     start = performance.now();
   }
@@ -445,3 +640,19 @@ async function draw() {
 }
 
 requestAnimationFrame(draw);
+
+// Add drop loop
+setInterval(() => {
+  const radius = 0.15 + Math.random() * 0.15;
+  const x = Math.random() * 2 - 1;
+  const y = Math.random() * 2 - 1;
+  currentDrop++;
+  if (currentDrop >= NUM_DROPS) {
+    currentDrop = 0;
+  }
+  makeDrop(currentDrop, x, y, radius, Math.random(), Math.random(), Math.random());
+  uniforms[NUM_DROPS * 4] = currentDrop;
+  simulateRequired = true;
+  draw();
+}, 5000);
+
