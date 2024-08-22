@@ -5,7 +5,8 @@
   "license": "MIT",
   "scripts": {
     "develop": "webpack-dev-server --mode development",
-    "build": "webpack --mode production"
+    "build": "webpack --mode production",
+    "bumble": "webpack --mode production && mv dist/bundle.js ../bumble/static/bumble_remix.js"
   },
   "devDependencies": {
     "@types/earcut": "^2",

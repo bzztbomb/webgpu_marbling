@@ -48,5 +48,9 @@ fn vertexMain(
 
 @fragment
 fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
-  return textureSample(dropTexture, dropSampler, input.uv, input.dropIndex % NUM_IMAGES);
+  let ret = textureSample(dropTexture, dropSampler, input.uv, input.dropIndex % NUM_IMAGES);
+  if (ret.a < 0.2) {
+    discard;
+  }
+  return ret;
 }
