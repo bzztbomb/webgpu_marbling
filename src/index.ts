@@ -8,7 +8,7 @@
 // DONE: Resize
 // DONE: Support gifs
 // DONE: Bvmble
-// TODO: Deploy!
+// DONE: Deploy!
 
 import { preprocess } from "./preprocessor";
 
@@ -17,6 +17,7 @@ import dropShader from "./drop.wgsl";
 import simulateShader from "./simulate.wgsl";
 import { decompressFrames, parseGIF } from "gifuct-js";
 import { Decoder } from "./gifdecoder";
+import { getResizePipeline } from "./resize";
 
 //
 // Drop simulation
@@ -40,12 +41,13 @@ const ShaderConsts = {
   NUM_IMAGES: NUM_IMAGES,
 };
 
-const NUM_UNIFORMS = 5;
+const NUM_UNIFORMS = 6;
 const UNIFORM_CURRENT_DROP = NUM_DROPS * 4; // f32 - 4bytes
 const UNIFORM_ASPECT_RATIO_X = NUM_DROPS * 4 + 2; // vec2 -
 const UNIFORM_ASPECT_RATIO_Y = NUM_DROPS * 4 + 3;
 const UNIFORM_DROP_X_Y_R = NUM_DROPS * 4 + 4;
 const UNIFORM_TIME = NUM_DROPS * 4 + 7;
+const UNIFORM_COLOR = NUM_DROPS * 4 + 7;
 
 const uniforms = new Float32Array((NUM_DROPS + NUM_UNIFORMS) * 4);
 
@@ -176,108 +178,6 @@ context.configure({
   format,
 });
 
-const resizeModule = device.createShaderModule({
-  label: "resizeModule",
-  code: `
-    @group(0) @binding(0) var<uniform> resize: vec2f;
-    @group(0) @binding(1) var s: sampler;
-    @group(0) @binding(2) var texture: texture_2d<f32>;
-
-    struct VertexOutput {
-      @builtin(position) pos: vec4f,
-      @location(0) uv: vec2f
-    }
-
-    @vertex fn vs(
-      @builtin(vertex_index) vertexIndex : u32
-    ) -> VertexOutput {
-      let pos = array(
-        vec2f(-1.0, -1.0), // upper left
-        vec2f(-1.0, 1.0), // lower left
-        vec2f( 1.0, 1.0), // lower right
-
-        vec2f( 1.0,  1.0),  // lower right
-        vec2f( 1.0,  -1.0), // upper right
-        vec2f(-1.0,  -1.0), // upper left
-      );
-      let uv = array(
-        vec2f(0.0, 1.0), // upper left
-        vec2f(0.0, 0.0), // lower left
-        vec2f(1.0, 0.0), // lower right
-        vec2f(1.0, 0.0), // lower right
-        vec2f(1.0, 1.0), // upper right
-        vec2f(0.0, 1.0), // upper left
-      );
-      var output: VertexOutput;
-      output.pos = vec4f(pos[vertexIndex] * resize.xy, 0.0, 1.0);
-      output.uv = uv[vertexIndex];
-      return output;
-    }
-
-    @fragment fn fs(input: VertexOutput) -> @location(0) vec4f {
-      return textureSample(texture, s, input.uv);
-    }
-  `,
-});
-
-const resizeLayout = device.createBindGroupLayout({
-  label: "resize layout",
-  entries: [
-    {
-      binding: 0,
-      visibility: GPUShaderStage.VERTEX,
-      buffer: { type: "uniform" },
-    },
-    {
-      binding: 1,
-      visibility: GPUShaderStage.FRAGMENT,
-      sampler: { type: "filtering" },
-    },
-    {
-      binding: 2,
-      visibility: GPUShaderStage.FRAGMENT,
-      texture: { sampleType: "float", viewDimension: "2d" },
-    },
-  ],
-});
-
-const resizePipeline = device.createRenderPipeline({
-  label: "resize pipeline",
-  layout: device.createPipelineLayout({ bindGroupLayouts: [resizeLayout] }),
-  vertex: {
-    entryPoint: "vs",
-    module: resizeModule,
-  },
-  fragment: {
-    entryPoint: "fs",
-    module: resizeModule,
-    targets: [
-      {
-        format: "rgba8unorm",
-        blend: {
-          color: {
-            srcFactor: "one",
-            dstFactor: "one-minus-src-alpha",
-          },
-          alpha: {
-            srcFactor: "one",
-            dstFactor: "one-minus-src-alpha",
-          },
-        },
-      },
-    ],
-  },
-});
-
-const resizeUniforms = new Float32Array(4);
-const resizeUniformBuffer = device.createBuffer({
-  label: "resize  uniforms",
-  size: resizeUniforms.byteLength,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-});
-
-device.queue.writeBuffer(resizeUniformBuffer, 0, resizeUniforms);
-
 const pow2 = device.createTexture({
   label: "square",
   format: "rgba8unorm",
@@ -290,6 +190,8 @@ const pow2 = device.createTexture({
     GPUTextureUsage.COPY_SRC |
     GPUTextureUsage.RENDER_ATTACHMENT,
 });
+
+const { resizeUniforms, resizeUniformBuffer, resizePipeline, resizeLayout } = getResizePipeline(device);
 
 async function loadImageToSlot(
   img: string | HTMLCanvasElement,
@@ -681,6 +583,7 @@ function draw() {
   if (simulateRequired) {
     pingPong = 1 - pingPong;
 
+    // Simulate pass runs the particle system that moves the vertices of each drop around.
     const simulatePass = encoder.beginComputePass();
     simulatePass.setPipeline(simulatePipeline);
     simulatePass.setBindGroup(0, simulateBindGroups[pingPong]);
@@ -689,6 +592,7 @@ function draw() {
     );
     simulatePass.end();
 
+    // Generate the index buffer for each drop
     const earcutPass = encoder.beginComputePass();
     earcutPass.setPipeline(earcutPipeline);
     earcutPass.setBindGroup(0, earcutBindGroups[pingPong]);
@@ -700,6 +604,7 @@ function draw() {
     simulateRequired = false;
   }
 
+  // Draw the drops, one draw call!
   const pass = encoder.beginRenderPass({
     colorAttachments: [
       {

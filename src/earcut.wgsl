@@ -28,11 +28,14 @@ fn computeMain(@builtin(global_invocation_id) drop: vec3u) {
   var prevIdx: u32 = NUM_DROP_VERTICES - 1;
   const MAX_LOOPS = TRIANGLES_GENERATED * TRIANGLES_GENERATED;
   for (var x: u32 = 0; x < MAX_LOOPS && prevIdx != nextIdx; x++) {    
+    // Get canidate "ear"
     let a = vertices[vertexOffset + prevIdx];
     let b = vertices[vertexOffset + currIdx];
-    let c = vertices[vertexOffset + nextIdx];    
+    let c = vertices[vertexOffset + nextIdx];
+    // Is this an ear?
     var isEar = area(a, b, c) < 0;
     if (isEar) {      
+      // Yup, cut it out of the larger polygon
       var pIdx = nextVert[nextIdx];
       while (pIdx != prevIdx && isEar) {
         let pp = vertices[vertexOffset + prevVert[pIdx] ];
@@ -46,6 +49,7 @@ fn computeMain(@builtin(global_invocation_id) drop: vec3u) {
       }
     }
     if (isEar) {
+      // Add it to the triangle output list (index buffer)
       triangles[outIdx] = prevIdx + vertexOffset;
       outIdx++;
       triangles[outIdx] = currIdx + vertexOffset;      
@@ -53,6 +57,7 @@ fn computeMain(@builtin(global_invocation_id) drop: vec3u) {
       triangles[outIdx] = nextIdx + vertexOffset;
       outIdx++;
 
+      // Update the linked list
       nextVert[prevIdx] = nextIdx;
       prevVert[nextIdx] = prevIdx;
     }
@@ -62,6 +67,7 @@ fn computeMain(@builtin(global_invocation_id) drop: vec3u) {
   }
 }
 
+// Is p in triangle abc?
 fn isInTriangle(a: vec2f, b: vec2f, c: vec2f, p: vec2f) -> bool {
   return ( 
     (c.x - p.x) * (a.y - p.y) - (a.x - p.x) * (c.y - p.y) >= 0 &&
@@ -70,6 +76,7 @@ fn isInTriangle(a: vec2f, b: vec2f, c: vec2f, p: vec2f) -> bool {
   );
 }
 
+// Signed area of abc
 fn area(a: vec2f, b: vec2f, c: vec2f) -> f32 {
   return (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
 }
